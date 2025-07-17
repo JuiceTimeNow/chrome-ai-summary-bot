@@ -1,54 +1,48 @@
-// Background script - handles API calls and cross-origin requests
+// Background script - handles API calls, context menus & notifications
 
+// 1) Handle messages from popup/content
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'summarize') {
     handleSummarization(request.text, request.config)
       .then(result => sendResponse(result))
       .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // Keep the message channel open for async response
+    return true; // async response
   }
 });
 
+// 2) Summarization dispatcher
 async function handleSummarization(text, config) {
   try {
     if (!config.apiKey) {
       throw new Error('API key not configured');
     }
-
     const { aiProvider, apiKey, summaryLength, summaryStyle } = config;
-    
-    let summary;
+
     if (aiProvider === 'openai') {
-      summary = await callOpenAI(text, apiKey, summaryLength, summaryStyle);
-    } else if (aiProvider === 'anthropic') {
-      summary = await callAnthropic(text, apiKey, summaryLength, summaryStyle);
-    } else {
+      const summary = await callOpenAI(text, apiKey, summaryLength, summaryStyle);
+      return { success: true, summary };
+    } 
+    else if (aiProvider === 'anthropic') {
+      const summary = await callAnthropic(text, apiKey, summaryLength, summaryStyle);
+      return { success: true, summary };
+    } 
+    else {
       throw new Error('Unsupported AI provider');
     }
-
-    return { success: true, summary: summary };
-  } catch (error) {
+  } 
+  catch (error) {
     console.error('Summarization error:', error);
     return { success: false, error: error.message };
   }
 }
 
+// 3) OpenAI API call
 async function callOpenAI(text, apiKey, summaryLength, summaryStyle) {
-  const lengthPrompt = {
-    short: 'in 2-3 sentences',
-    medium: 'in one paragraph',
-    long: 'in 2-3 paragraphs'
-  };
-
-  const stylePrompt = {
-    bullet: 'as bullet points',
-    paragraph: 'as a cohesive paragraph',
-    key_points: 'highlighting the key points'
-  };
+  const lengthPrompt = { short: 'using about 50 to 100 words', medium: 'using about 100 to 200 words ', long: 'using about 300 to 600 words' };
+  const stylePrompt  = { bullet: 'formatted as bullet points', paragraph: 'formatted as a cohesive paragraph', key_points: 'highlighting the key points' };
 
   const prompt = `Please summarize the following article ${lengthPrompt[summaryLength]} ${stylePrompt[summaryStyle]}:\n\n${text}`;
-
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -57,45 +51,29 @@ async function callOpenAI(text, apiKey, summaryLength, summaryStyle) {
     body: JSON.stringify({
       model: 'gpt-3.5-turbo',
       messages: [
-        {
-          role: 'system',
-          content: 'You are a helpful assistant that summarizes articles clearly and concisely.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
+        { role: 'system', content: 'You are a helpful assistant that summarizes articles clearly and concisely.' },
+        { role: 'user', content: prompt }
       ],
-      max_tokens: 500,
+      max_tokens: 600,
       temperature: 0.3
     })
   });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(`OpenAI API error: ${response.status} ${errorData.error?.message || response.statusText}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(`OpenAI API error: ${resp.status} ${err.error?.message || resp.statusText}`);
   }
-
-  const data = await response.json();
+  const data = await resp.json();
   return data.choices[0].message.content.trim();
 }
 
+// 4) Anthropic API call
 async function callAnthropic(text, apiKey, summaryLength, summaryStyle) {
-  const lengthPrompt = {
-    short: 'in 2-3 sentences',
-    medium: 'in one paragraph',
-    long: 'in 2-3 paragraphs'
-  };
-
-  const stylePrompt = {
-    bullet: 'as bullet points',
-    paragraph: 'as a cohesive paragraph',
-    key_points: 'highlighting the key points'
-  };
+  const lengthPrompt = { short: 'in 2-3 sentences', medium: 'in one paragraph', long: 'in 2-3 paragraphs' };
+  const stylePrompt  = { bullet: 'as bullet points', paragraph: 'as a cohesive paragraph', key_points: 'highlighting the key points' };
 
   const prompt = `Please summarize the following article ${lengthPrompt[summaryLength]} ${stylePrompt[summaryStyle]}:\n\n${text}`;
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -106,97 +84,61 @@ async function callAnthropic(text, apiKey, summaryLength, summaryStyle) {
       model: 'claude-3-sonnet-20240229',
       max_tokens: 500,
       system: 'You are a helpful assistant that summarizes articles clearly and concisely.',
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
+      messages: [{ role: 'user', content: prompt }]
     })
   });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(`Anthropic API error: ${response.status} ${errorData.error?.message || response.statusText}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(`Anthropic API error: ${resp.status} ${err.error?.message || resp.statusText}`);
   }
-
-  const data = await response.json();
+  const data = await resp.json();
   return data.content[0].text.trim();
 }
 
-// Handle extension installation and setup
+// 5) Create the context‑menu when extension is installed
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('AI Article Summarizer extension installed');
-  
-  // Add context menu item (only if contextMenus API is available)
-  if (chrome.contextMenus) {
-    chrome.contextMenus.create({
-      id: 'summarize-selection',
-      title: 'Summarize selected text',
-      contexts: ['selection']
-    });
+  chrome.contextMenus.create({
+    id: 'summarize-selection',
+    title: 'Summarize selected text',
+    contexts: ['selection']
+  });
+});
+
+// 6) Immediately register the click handler at top level
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId !== 'summarize-selection') return;
+
+  try {
+    const config = await chrome.storage.sync.get(['aiProvider','apiKey','summaryLength','summaryStyle']);
+    if (!config.apiKey) {
+      return chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icon48.png',
+        title: 'Missing API key',
+        message: 'Please configure your API key in the popup'
+      });
+    }
+
+    const result = await handleSummarization(info.selectionText, config);
+    if (result.success) {
+      await chrome.storage.local.set({ lastSummary: result.summary });
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icon48.png',
+        title: 'Summary Ready',
+        message: 'Click the extension icon to view your summary'
+      });
+    } else {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icon48.png',
+        title: 'Summarization Failed',
+        message: result.error
+      });
+    }
+  } 
+  catch (err) {
+    console.error('Context‑menu error:', err);
   }
 });
-
-// Handle context menu clicks (set up listener after APIs are available)
-chrome.runtime.onStartup.addListener(() => {
-  setupContextMenuListener();
-});
-
-// Also set up on install
-chrome.runtime.onInstalled.addListener(() => {
-  setupContextMenuListener();
-});
-
-function setupContextMenuListener() {
-  if (chrome.contextMenus && chrome.contextMenus.onClicked) {
-    chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-      if (info.menuItemId === 'summarize-selection') {
-        try {
-          const config = await chrome.storage.sync.get(['aiProvider', 'apiKey', 'summaryLength', 'summaryStyle']);
-          
-          if (!config.apiKey) {
-            // Show notification to configure
-            if (chrome.notifications) {
-              chrome.notifications.create({
-                type: 'basic',
-                iconUrl: 'icon48.png',
-                title: 'Configuration Required',
-                message: 'Please configure your API key in the extension popup'
-              });
-            }
-            return;
-          }
-
-          const result = await handleSummarization(info.selectionText, config);
-          
-          if (result.success) {
-            // Show notification and store summary
-            if (chrome.notifications) {
-              chrome.notifications.create({
-                type: 'basic',
-                iconUrl: 'icon48.png',
-                title: 'Summary Ready',
-                message: 'Click the extension icon to view the summary'
-              });
-            }
-            
-            // Store the summary temporarily
-            await chrome.storage.local.set({ lastSummary: result.summary });
-          } else {
-            if (chrome.notifications) {
-              chrome.notifications.create({
-                type: 'basic',
-                iconUrl: 'icon48.png',
-                title: 'Summarization Failed',
-                message: result.error
-              });
-            }
-          }
-        } catch (error) {
-          console.error('Context menu summarization error:', error);
-        }
-      }
-    });
-  }
-}

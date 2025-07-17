@@ -94,16 +94,31 @@ document.addEventListener('DOMContentLoaded', function() {
   async function summarizeArticle() {
     clearPreviousResults();
 
-    const { apiKey } = await chrome.storage.sync.get(['apiKey']);
-    if (!apiKey) {
+    // Read current settings directly from UI
+    const aiProviderVal   = document.getElementById('aiProvider').value;
+    const apiKeyVal       = document.getElementById('apiKey').value;
+    const summaryLengthVal= document.getElementById('summaryLength').value;
+    const summaryStyleVal = document.getElementById('summaryStyle').value;
+
+    // Validate API key
+    if (!apiKeyVal) {
       showError('Please configure your API key first');
       return;
     }
+
+    // Persist settings so they stick on next popup open
+    await chrome.storage.sync.set({
+      aiProvider: aiProviderVal,
+      apiKey: apiKeyVal,
+      summaryLength: summaryLengthVal,
+      summaryStyle: summaryStyleVal
+    });
 
     loading.style.display = 'block';
     summarizeBtn.disabled = true;
 
     try {
+      // Extract article text
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -114,12 +129,16 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('No article content found on this page');
       }
 
-      const config   = await chrome.storage.sync.get([
-        'aiProvider', 'apiKey', 'summaryLength', 'summaryStyle'
-      ]);
-      const response = await chrome.runtime.sendMessage({
-        action: 'summarize', text: articleText, config
-      });
+      // Build config from current UI selections
+      const config = {
+        aiProvider:   aiProviderVal,
+        apiKey:       apiKeyVal,
+        summaryLength:summaryLengthVal,
+        summaryStyle: summaryStyleVal
+      };
+
+      // Send to background script
+      const response = await chrome.runtime.sendMessage({ action: 'summarize', text: articleText, config });
 
       if (response.success) {
         showSummary(response.summary);

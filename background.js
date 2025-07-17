@@ -36,12 +36,15 @@ async function handleSummarization(text, config) {
   }
 }
 
+
+
 // 3) OpenAI API call
 async function callOpenAI(text, apiKey, summaryLength, summaryStyle) {
-  const lengthPrompt = { short: 'using about 50 to 100 words', medium: 'using about 100 to 200 words ', long: 'using about 300 to 600 words' };
-  const stylePrompt  = { bullet: 'formatted as bullet points', paragraph: 'formatted as a cohesive paragraph', key_points: 'highlighting the key points' };
+  const lengthPrompt = { short: 'using not more than 80 words ', medium: 'using between 100 and 200 words ', long: 'using no less than 300 words and no more than 600 words ' };
+  const stylePrompt  = { bullet: 'formatted as bullet points', paragraph: 'formatted as a cohesive paragraph, or paragraphs', key_points: 'highlighting the key points' };
 
   const prompt = `Please summarize the following article ${lengthPrompt[summaryLength]} ${stylePrompt[summaryStyle]}:\n\n${text}`;
+
   const resp = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -49,13 +52,13 @@ async function callOpenAI(text, apiKey, summaryLength, summaryStyle) {
       'Authorization': `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4o-mini-2024-07-18',
       messages: [
-        { role: 'system', content: 'You are a helpful assistant that summarizes articles clearly and concisely.' },
+        { role: 'system', content: 'You are a helpful assistant that summarizes articles clearly and concisely, while following word limits' },
         { role: 'user', content: prompt }
       ],
       max_tokens: 600,
-      temperature: 0.3
+      temperature: 0.6
     })
   });
 

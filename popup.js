@@ -14,7 +14,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Preserve line breaks
   summaryContent.style.whiteSpace = 'pre-wrap';
 
-  // Load config and check for stored summary
+  // Load config and show stored summary for this URL
   loadConfig();
   checkForStoredSummary();
 
@@ -23,13 +23,23 @@ document.addEventListener('DOMContentLoaded', function() {
   summarizeBtn.addEventListener('click', summarizeArticle);
   clearBtn.addEventListener('click', clearSummary);
 
-  // 1) Conditionally show stored summary only if URL matches
+  // 1) Show stored summary if not expired (24h TTL)
   async function checkForStoredSummary() {
     try {
-      const { lastSummary, lastSummaryUrl } = await chrome.storage.local.get(['lastSummary', 'lastSummaryUrl']);
+      const { summaryCache = {} } = await chrome.storage.local.get(['summaryCache']);
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (lastSummary && lastSummaryUrl === tab.url) {
-        showSummary(lastSummary);
+      const entry = summaryCache[tab.url];
+      if (entry) {
+        const now = Date.now();
+        const age = now - entry.ts;
+        const TTL = 24 * 60 * 60 * 1000; // 24 hours in ms
+        if (age < TTL) {
+          showSummary(entry.text);
+        } else {
+          // expired: remove and update storage
+          delete summaryCache[tab.url];
+          await chrome.storage.local.set({ summaryCache });
+        }
       }
     } catch (err) {
       console.error('Error checking stored summary:', err);
@@ -39,7 +49,9 @@ document.addEventListener('DOMContentLoaded', function() {
   // 2) Load saved configuration
   async function loadConfig() {
     try {
-      const result = await chrome.storage.sync.get(['aiProvider','apiKey','summaryLength','summaryStyle']);
+      const result = await chrome.storage.sync.get([
+        'aiProvider', 'apiKey', 'summaryLength', 'summaryStyle'
+      ]);
       if (result.aiProvider)    document.getElementById('aiProvider').value    = result.aiProvider;
       if (result.apiKey)         document.getElementById('apiKey').value         = result.apiKey;
       if (result.summaryLength)  document.getElementById('summaryLength').value  = result.summaryLength;
@@ -78,7 +90,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(() => { configStatus.style.display = 'none'; }, 3000);
   }
 
-  // 5) Summarize article and persist summary with URL
+  // 5) Summarize article and update cache
   async function summarizeArticle() {
     clearPreviousResults();
 
@@ -93,38 +105,48 @@ document.addEventListener('DOMContentLoaded', function() {
 
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, function: extractArticleContent });
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        function: extractArticleContent
+      });
       const articleText = results[0].result;
       if (!articleText || articleText.trim().length === 0) {
         throw new Error('No article content found on this page');
       }
 
-      const config   = await chrome.storage.sync.get(['aiProvider','apiKey','summaryLength','summaryStyle']);
-      const response = await chrome.runtime.sendMessage({ action: 'summarize', text: articleText, config });
+      const config   = await chrome.storage.sync.get([
+        'aiProvider', 'apiKey', 'summaryLength', 'summaryStyle'
+      ]);
+      const response = await chrome.runtime.sendMessage({
+        action: 'summarize', text: articleText, config
+      });
 
       if (response.success) {
         showSummary(response.summary);
-        await chrome.storage.local.set({ lastSummary: response.summary, lastSummaryUrl: tab.url });
+        // cache result with timestamp
+        const { summaryCache = {} } = await chrome.storage.local.get(['summaryCache']);
+        summaryCache[tab.url] = { text: response.summary, ts: Date.now() };
+        await chrome.storage.local.set({ summaryCache });
       } else {
         throw new Error(response.error || 'Unknown error');
       }
     } catch (err) {
       showError(err.message);
     } finally {
-      loading.style.display     = 'none';
-      summarizeBtn.disabled     = false;
+      loading.style.display = 'none';
+      summarizeBtn.disabled = false;
     }
   }
 
   // 6) Clear previous results from UI
   function clearPreviousResults() {
-    summary.style.display      = 'none';
-    error.style.display        = 'none';
-    summaryContent.textContent = '';
-    errorContent.textContent   = '';
+    summary.style.display          = 'none';
+    error.style.display            = 'none';
+    summaryContent.textContent     = '';
+    errorContent.textContent       = '';
   }
 
-  // 7) Display summary with extra blank line before bullets
+  // 7) Display summary with blank line before each bullet
   function showSummary(summaryText) {
     const formatted = summaryText.replace(/(^|\n)(- )/g, '$1\n$2');
     summaryContent.textContent = formatted;
@@ -137,16 +159,22 @@ document.addEventListener('DOMContentLoaded', function() {
     error.style.display      = 'block';
   }
 
-  // 9) Clear summary manually and remove stored data
+  // 9) Clear summary for current URL and update cache
   async function clearSummary() {
     clearPreviousResults();
-    await chrome.storage.local.remove(['lastSummary','lastSummaryUrl']);
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const { summaryCache = {} } = await chrome.storage.local.get(['summaryCache']);
+    delete summaryCache[tab.url];
+    await chrome.storage.local.set({ summaryCache });
   }
 });
 
 // Content extraction function injected into the page
 function extractArticleContent() {
-  const selectors = ['article','[role="main"]','.post-content','.entry-content','.article-content','.content','main','#content','.story-body','.article-body'];
+  const selectors = [
+    'article', '[role="main"]', '.post-content', '.entry-content',
+    '.article-content', '.content', 'main', '#content', '.story-body', '.article-body'
+  ];
   let articleElement = null;
   for (const sel of selectors) {
     articleElement = document.querySelector(sel);
@@ -154,7 +182,10 @@ function extractArticleContent() {
   }
   if (!articleElement) articleElement = document.body;
   if (!articleElement) return '';
-  articleElement.querySelectorAll('script,style,nav,header,footer,aside,.sidebar,.nav,.menu,.advertisement,.ads,.social-share,.comments').forEach(el => el.remove());
+  articleElement.querySelectorAll(
+    'script, style, nav, header, footer, aside, .sidebar, .nav, .menu,' +
+    ' .advertisement, .ads, .social-share, .comments'
+  ).forEach(el => el.remove());
   let text = articleElement.innerText || articleElement.textContent || '';
   text = text.replace(/\s+/g, ' ').trim();
   if (text.length > 15000) text = text.substring(0, 15000) + '...';

@@ -124,13 +124,11 @@ async function callAnthropic(text, apiKey, summaryLength, summaryStyle) {
   return data.content[0].text.trim();
 }
 
-// Handle extension installation
+// Handle extension installation and setup
 chrome.runtime.onInstalled.addListener(() => {
   console.log('AI Article Summarizer extension installed');
-});
-
-// Add context menu item (only if contextMenus API is available)
-chrome.runtime.onInstalled.addListener(() => {
+  
+  // Add context menu item (only if contextMenus API is available)
   if (chrome.contextMenus) {
     chrome.contextMenus.create({
       id: 'summarize-selection',
@@ -140,54 +138,65 @@ chrome.runtime.onInstalled.addListener(() => {
   }
 });
 
-// Handle context menu clicks (only if contextMenus API is available)
-if (chrome.contextMenus) {
-  chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-    if (info.menuItemId === 'summarize-selection') {
-      try {
-        const config = await chrome.storage.sync.get(['aiProvider', 'apiKey', 'summaryLength', 'summaryStyle']);
-        
-        if (!config.apiKey) {
-          // Show notification to configure
-          if (chrome.notifications) {
-            chrome.notifications.create({
-              type: 'basic',
-              iconUrl: 'icon48.png',
-              title: 'Configuration Required',
-              message: 'Please configure your API key in the extension popup'
-            });
-          }
-          return;
-        }
+// Handle context menu clicks (set up listener after APIs are available)
+chrome.runtime.onStartup.addListener(() => {
+  setupContextMenuListener();
+});
 
-        const result = await handleSummarization(info.selectionText, config);
-        
-        if (result.success) {
-          // Show notification and store summary
-          if (chrome.notifications) {
-            chrome.notifications.create({
-              type: 'basic',
-              iconUrl: 'icon48.png',
-              title: 'Summary Ready',
-              message: 'Click the extension icon to view the summary'
-            });
-          }
+// Also set up on install
+chrome.runtime.onInstalled.addListener(() => {
+  setupContextMenuListener();
+});
+
+function setupContextMenuListener() {
+  if (chrome.contextMenus && chrome.contextMenus.onClicked) {
+    chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+      if (info.menuItemId === 'summarize-selection') {
+        try {
+          const config = await chrome.storage.sync.get(['aiProvider', 'apiKey', 'summaryLength', 'summaryStyle']);
           
-          // Store the summary temporarily
-          await chrome.storage.local.set({ lastSummary: result.summary });
-        } else {
-          if (chrome.notifications) {
-            chrome.notifications.create({
-              type: 'basic',
-              iconUrl: 'icon48.png',
-              title: 'Summarization Failed',
-              message: result.error
-            });
+          if (!config.apiKey) {
+            // Show notification to configure
+            if (chrome.notifications) {
+              chrome.notifications.create({
+                type: 'basic',
+                iconUrl: 'icon48.png',
+                title: 'Configuration Required',
+                message: 'Please configure your API key in the extension popup'
+              });
+            }
+            return;
           }
+
+          const result = await handleSummarization(info.selectionText, config);
+          
+          if (result.success) {
+            // Show notification and store summary
+            if (chrome.notifications) {
+              chrome.notifications.create({
+                type: 'basic',
+                iconUrl: 'icon48.png',
+                title: 'Summary Ready',
+                message: 'Click the extension icon to view the summary'
+              });
+            }
+            
+            // Store the summary temporarily
+            await chrome.storage.local.set({ lastSummary: result.summary });
+          } else {
+            if (chrome.notifications) {
+              chrome.notifications.create({
+                type: 'basic',
+                iconUrl: 'icon48.png',
+                title: 'Summarization Failed',
+                message: result.error
+              });
+            }
+          }
+        } catch (error) {
+          console.error('Context menu summarization error:', error);
         }
-      } catch (error) {
-        console.error('Context menu summarization error:', error);
       }
-    }
-  });
+    });
+  }
 }

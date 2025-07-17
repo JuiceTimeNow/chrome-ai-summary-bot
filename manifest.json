@@ -5,7 +5,9 @@
   "description": "Summarize articles using AI",
   "permissions": [
     "activeTab",
-    "storage"
+    "storage",
+    "contextMenus",
+    "notifications"
   ],
   "host_permissions": [
     "https://api.openai.com/*",

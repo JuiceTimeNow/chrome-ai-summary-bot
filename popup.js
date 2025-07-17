@@ -9,13 +9,27 @@ document.addEventListener('DOMContentLoaded', function() {
   const errorContent = document.getElementById('errorContent');
   const configStatus = document.getElementById('configStatus');
 
-  // Load saved configuration
+  // Load saved configuration and check for stored summary
   loadConfig();
+  checkForStoredSummary();
 
   // Event listeners
   saveConfigBtn.addEventListener('click', saveConfig);
   summarizeBtn.addEventListener('click', summarizeArticle);
   clearBtn.addEventListener('click', clearSummary);
+
+  async function checkForStoredSummary() {
+    try {
+      const result = await chrome.storage.local.get(['lastSummary']);
+      if (result.lastSummary) {
+        showSummary(result.lastSummary);
+        // Clear the stored summary after showing it
+        await chrome.storage.local.remove(['lastSummary']);
+      }
+    } catch (err) {
+      console.error('Error checking stored summary:', err);
+    }
+  }
 
   async function loadConfig() {
     try {
